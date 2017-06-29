@@ -452,7 +452,7 @@ motivating example: a pool of ints, want to determine whether any element of con
 
 _associative container_
 + automatically arrange elements into sequence depends on value of elements themselves, rather than the sequence in which they are inserted.
-+ efficient _loop up / access_
++ efficient _look up / access_
 
 
 __Map__
@@ -547,6 +547,12 @@ __generic function__
     + Scenario
       + When a type (i.e. `vector<T>`) that depends on template parameter and want to use a member of the type (i.e. `size_type`)
       + Use `typename` to let implementation know how to treat the name as a type  
+      + this is necessary because 
+        + `T::bar` may be either a type or value 
+        + the compiler will 
+        > A name used in a template declaration or definition and that is dependent on a template-parameter is assumed not to name a type unless the applicable name lookup finds a type name or the name is qualified by the keyword typename. 
+        
+      + so to indicate that its a type, we prefix with `typename`
   + _template instantiation_
     + When calling `median(v)` where `v` is of type `vector<int>`. implementation will create/compile an instance of function that replaces every use of `T` by `int`
 
@@ -587,12 +593,12 @@ __Data-structure independence__
     + `b`: first element of range, `e`: one past last element of range
       + why not let `e` be last element of range?
         1. if range has no element, then `e` would be set differently
-        2. iterator comparison uses `!=` or `==` only, no need to note if one is less than another
-          + if `b == e`:  range empty
-          + if `b != e`: `b` refers to a valid element
-          + we can use `while(begin != end){ ++begin; }`
+        2. iterator comparison uses `!=` or `==` only, no need to note if one is less than another 
+            + if `b == e`:  range empty
+            + if `b != e`: `b` refers to a valid element
+            + we can use `while(begin != end){ ++begin; }`
         3. easy to specify out of range.
-          + just return second iterator of the range `e` to indicate failure
+            + just return second iterator of the range `e` to indicate failure
     + `end`: reference to last element
   + _input and output iterator_
     + why distinguish input/output iterator with forward iterator.
@@ -918,28 +924,41 @@ _summary_
       2. or return object by value from a function, (i.e. `vector<string> words = split(line)`)
       3. object initialization (i.e. `vector<Student_info> vs; vector<Student_info> v2 = vs`)
     + _copy constructor_
-      + controls both explicit and implicit copy
-      + takes in 1 arg that has same type as class itself.
-      + the arg is `const` since not changing anything
+      + initializes a new object as a copy of an existing object of same type 
+      + same name as class name 
+      + argument 
+        + 1 arg that has same type as class itself.
+        + must be `const` since not changing the original object 
     + _behavior_
       + when copy, need to allocate new space and copy contents from source to newly allocated destination
-      + ![](assets/README-a4af7.png)
+        + ![](assets/README-a4af7.png)
+      + instead of just copying values of the boundary pointers 
+        + ![](2017-06-27-23-26-44.png)
   + _assignment_
-    + always obliterates existing value (left side) and replace it with new value (right hand side)
-      + deallocate preexisting object
-      + allocates space for new object like copy
-    + self-assignment
-      + check is important; if not checked, then we will first deallocate the object, and since its deallocated, cant be used for copy later on.
+    + `Vec& operator=(const Vec&)`
+      + the assignment operator with `const Vec&` is special! it defines what it means to assign one value of class type to another
+    + _assignment vs copy_
+      + _copy_ 
+        + always create a new object for the first time 
+      + _assignment_ 
+        + always obliterates existing value (left side) and replace it with new value (right hand side)
+          + deallocate preexisting object
+          + allocates space for new object like copy
+        + self-assignment
+          + check is important; if not checked, then we will first deallocate the object, and since its deallocated, cant be used for copy later on.
     + Note
       + _template function outside of class header_:
         + template function `template <class T>`
         + have to explicitly name the type parameter in return type (`Vec<T>& Vec<T>::operator()`)
           + since we can omit (syntactic sugar) `<T>` inside class definition
+          + and return type `Vec<T>` is outside of scope of class 
       + _`this`_
-        + denotes a pointer to object on which the member function is operating, inside a member function. (i.e. `this` is of type `Vec*`, pointer to `Vec`)
+        + valid only inside a member function. 
+        + denotes a pointer to object on which the member function is operating, 
+          + i.e. `this` is of type `Vec*`, pointer to `Vec`
         + refer to the object itself
     + _assignment is not initialization_  
-      + _initialization_
+      + _initialization can be copy but never assignment_
         + `=` for giving initial value to variable, the _copy constructor_ is invoke, which creates a new object and giving it a value at the same time.
         + occurs when
           + variable declaration  
@@ -950,33 +969,46 @@ _summary_
             + (`string url = "~;/?:@...";`): create `string` from string literal
             + (`string spaces(url.size(), '');`): create `string` from constructor
       + _assignmnet_
-        + `=` for assignment, calling `operator=` instead, which always destroys previous value
+        + `=` in an expression for assignment, calling `operator=` instead, which always destroys previous value
         + occurs when
         + in expression (`y = url;`)
       + _example_
         + `vector<string> split(const string&);`: function declaration
         + `vector<string> v;`: initialization
-        + `v = split(line);`:
+        + `v = split(line);`: _assigning a class type return value from a function_
           + on entry, initialization of `split` param
+            + i.e. copy of params to function
           + on exit, initialization of return value
-          + then assignment to `v`
+            + i.e. copy the return value into a temporary at the call site
+          + then assignment to `v`  
+            + i.e. assigning the temporary  to left-hand operand
   + _destructor_
-    + controls what happens when objects of the type are destroyed, _destructor_ has same name as constructor but with a prefixed `~`
+    + `~Vec(){}`
+      + prefixed by `~`
+      + no param and no return value
+    + controls what happens when objects of the type are destroyed
       + functions as cleanup, releasing resources (memory)
     + object destroyed when
       + local variable goes out of scope
       + dynamically allocated object with `delete`
   + _default operation_
-    + compiler synthesizes default copy/assignment/destroy
-      + operate recursively on each data element according to appropriate rule for the type of that element
-      + class type member: call its copy constructor, assignment operator, and destructor
-      + built-in type member: copy and assign based on its value. do nothing for destroy (i.e. pointer not freed)
-    + default constructor recursively initializes each data member
+    + _default copy/assignment/destroy_ 
+      + compiler synthesized
+      + operate recursively on each data element according to appropriate rule for the _type of that element_
+        + _class type member_: call its copy constructor, assignment operator, and destructor
+        + _built-in type member_: 
+          + copy and assign based on its value. 
+          + destroying a pointer does not free the space at which the pointer points 
+    + _default constructor_ 
+      + compiler synthesized if the class defines ZERO constructor explicitly
+        + note: defining just a copy constructor will make compiler skip the sythesis part
+      + recursively initializes each data member
       + default-initialization / value-initialization for data members
   + _rule of three_
     + memory as resource
       + default destructor will destroy pointer, but does not free the space to which it points to, resulting in memory leak
       + default copy constructor does not allocate new space, hence 2 copies point to the same address. This becomes a problem if one copy is destroyed and we want to access the other copy
+      + to need to write custom destructor, copy constructor, and assignment concerning memory 
     + hence _destructor, copy constructor, and assignment operator_ comes hand in hand
       + constructor: `T::T()` to allocate resources
       + destructor: `T::~T()` to free up resources
@@ -990,10 +1022,233 @@ _summary_
       + `new` and `delete`:
         + restrictive since `new` both allocates and initializes memory
         + `new` also requires default constructor for `T`, must be class type
-        + `new` can be expensive since `T::T()` called and then initialized again with user specified values
+        + `new` can be expensive since `T::T()` called and then initialized again with user specified values. So each element is initialized twice
+      + `<memory>`
+        + `allocator<T>`
+          + allocates a block of uninitialized memory that is intended to contain objects of type `T`
+          + returns a pointer to initial element of that memory, which does not contain objects yet. 
+          + functions help to construct, destroy objects without deallocating the memory itself
+            + `T* allocator<T>::allocate(size_t);`
+              + allocates storage for `size_t` number of `T` that is 
+                + _typed_: able to use `T*` to address the memory
+                + _uninitialized_: raw storage and no objects have yet been constructed into it
+            + `void allocator<T>::deallocate(T*, size_t);`
+              + frees this unitialized storage
+            + `void allocator<T>::construct(T", const T&);`
+              + construct a single object in uninitialized space 
+              + given a pointer into space allocated, and value to copy into that space
+            + `void allocator<T>::destroy(T*);`
+              + runs destructor for `T` on element specified by `T*`
+            + `template<class Out, class T> void uninitialized_fill(Out, Out, const T&);`
+              + initialize elements in space that is allocated by `allocate`
+                + i.e. operates on raw storage allocated by `allocate`
+              + fills in unitialized space, range between first two args, with a newly constructed copy of value specified in third arg
+            + `template<class In, class Out> Out uninitialized_copy(In, In, Out);`
+              + assumes raw storage allocated by `allocate`
+              + copies values from a sequence specified by first two args into a target sequence denoted by third arg
+    + implementation 
+      + _class invariant_ 
+        1. `data` pointes to initial data element, if any, zero otherwise 
+        2. `data <= avail <= limit`
+        3. elements in `[data, avail)` has been constructed 
+        4. elements in `[avail, limit)` has not been constructed 
+  + _summary_ 
+    + template class  
 
 
+--- 
 
+# 12 Making class objects act like values 
+
++ _behave like values_  
+  + operators support 
+  + conversion (i.e. `int + double` converts `int` to `double`)
++ _automatic conversion_ 
+  + _built-in types_ 
+    + `double d = 10;`: converts 10 to `double` then use converted value to initialize 
+    + `double d2; d2 = 10`: convert 10 to `double` then use converted value to assign 
+  + `Str` 
+    + `Str s("hello")`: calls constructor `Str(const char*)`
+    + `Str t = "hello"`: initialization with default copy constructor, which has signature of `Str(const Str&)`
+    + `s = "hello"`: assignment with assignment operator `Str& operator=(const Str&)`
+    + Note the latter two uses string literal, which has type `const char*`, where `const Str&` is expected
+      + Note there is already a constructor that takes `const char*`, no need to overload existing constructor!
+  + _user-defined conversion_   
+    + specify transformation to and from objects of class type  
+    + define 
+      + from other type to its type 
+      + from its type to other type
++ _Str operations_
+  + _indexing_
+    + `char &operator[](size_type i) { return data[i]; }`
+    + `const char &operator[](size_type i) const { return data[i]; }`
+  + _Input-Output operator_ 
+    + why `>>` and `<<` must be nonmember function 
+      + assume if it is a member function 
+      + for binary operation 
+        + left operand bounded to first param (implicitly passed to member function)
+        + right operand bounded to second param 
+      + `cin >> str` would imply `cin.operator>>(s)` is called 
+        + i.e. `>>` is a member of `istream`
+      + but cannot add operation to `istream` since we do not own it 
+      + have to ues the other way `s >> cin` but this breaks convention of `>>`...
+      + hence `>>` and `<<` must be nonmember function
+    + `std::ostream &operator<<(std::ostream &, const Str &);`
+      + iterate over `<Vec>data` and outputs to `ostream`
+    + `std::istream &operator>>(std::istream &, Str &);` 
+      + clears previous value in string  
+      + read and remember chars from `istream`  
+        + starting from first non whitespace char 
+        + till whitespace or EOF 
+      + need access to private `<Vec>data`'s member function outside of class 
+        + `friend` 
+          + declare `operator>>` is a friend of `Str`, 
+          + allows same access rights as a member, 
+          + convention: group `friend` function at start of class definition right before `public`, 
+  + _other binary operator_ 
+    + `+` concatenation 
+      + _nonmember function_ 
+        + since concatenation does not change value of either operand, 
+        + and want to chain concatenation, i.e. `s1 + s2 + s3`
+      + `Str operator+(const Str&, const Str&)`
+      + returns a new string!
+    + `+=` compound concatenation 
+      + _member function_  
+        + since it changes the left operand
+        + returns reference `Str&`, as its an assignment operation after all
+      + `Str &operator+=(const Str &s)`
+  + _mixed type operation_ 
+    + case 
+      + `"Hello, " + name + "!"`
+        + since left associative, equivalent to `"(Hello, " + name) + "!"`
+        + Note two kinds of `+` operator 
+          + left operand is a string literal and right operand is `Str`
+          + left operand is `Str` and right operand is string literal 
+        + in summary: calling `const char*` and `Str` in some order 
+          + however we have defined arg types of `Str` only
+      + solution 
+        + constructor with `const char*` as arg also a conversion operator from `const char*` to `Str`
+        + the compiler will do conversion first and then invoke `operator+`
+  + _design binary operators_ 
+    + points 
+      + if a class supports conversion, best to define binary operators as nonmember function to preserve symmetry between the operands
+      + if operator is a member, then its left operand cannot be result of an automatic conversion
++ _Hazardous conversions_ 
+  + `Vec<string> p = frame(42)`
+  + `explicit`
+    + compiler will not create objects implicitly by converting operands in expression or function calls 
+    + `explicit` constructor is used to define structure of object being constructed, rather than its content
+      + i.e. `explicity Vec(size_type n)`: `n` defines how many elements to allocate, which determines structure of object, not its value
+    + constructor that is not `explicit` are usually one whose argument become part of object 
+      + i.e. `Str(const char *)`
++ _Conversion operator_ 
+  + some constructor also defines conversion 
+  + _conversion operator_   
+    + must be member function 
+    + defines how to convert an object of its type to target type
+      + usually useful in converting class type to built in type
+      + or in converting to another class type for which we do not own the code
+    + signature: `operator target_type()`
+  + _example_ 
+    + 
+      ```cpp 
+      class Student_info {
+        public:
+          operator double():
+      }
+      ```
+    + i.e. conversion used by compiler any time we had an object of type `Student_info` but needed an object of type `double`
+      ```cpp 
+      vector<Student_info> vs;
+      double d = 0;
+      for(int i = 0; i != vs.size(); ++i)
+        d += vs[i]
+      cout << "average grade: " << d / vs.size() << endl;
+      ```
+  + _another example_   
+    + `if(cin >> x){ ... }`
+    + `if` tests an expression yielding type `bool`
+    + `std::iostream` defines a conversion of `istream -> void*`, by defining `istream::operator void*` 
+      + which tests various status flags to determine whether the `istream` is valid, 
+      + and return either 
+        + `0` or 
+        + implementation defined nonzero `void  *` value to indicate state of stream 
+      + type `void *` can be converted to `bool`
+    + why not define `istream::operator bool` ? 
+      + `int x; cin << x;` would be wrong
+        + `cin -> bool` conversion 
+        + `bool -> int` conversion 
+        + then the `int` value is shifted by value of `x`, and result throw away! 
+      + if `cin -> void *`, rather than `int` which is an arithmic type, the standard library allows `istream` to be used as a condition, but prevents it being used as arithmetic value
++ _conversions and memory management_ 
+  + case 
+    + C++ interface to C, which use null-terminated char arrays 
+    + so, `Str` should provide `Str::operator char*` for automatic conversion `Str -> char*`
+    + this approach is fraught with memory management issues
+  + 
+      ```cpp 
+        class Str {
+          public: 
+            operator char*();
+            operator const char*() const; 
+        }
+
+        //usage 
+        Str s;
+        ifstream in(s);     // convert Str -> char * and open stream 
+      ```
+  + problem 
+    + cant return `data` since its the wrong type (`Vec<char>`)
+    + even if type match, returning a private `data` as a pointer would 
+      + break incapsulation,
+      + allow modification to private `data`
+      + upon `Str` destruction, the pointer will not point to invalid memory addr 
+    + how about making a conversion to `const char*`? 
+      + but this prevent a user from destorying `Str` and then using the pointer
+    + how about allocate new space for a copy of chars in `data`, and return pointer to newly allocated space
+      + The user would have to manage this space, and free it when no longer needed
+      + in some case, implicit conversion making it impossible to destroy pointer afterwards 
+        + i.e. `Str s; ifstream(s);`
+        + implicity conversion `Str -> const char*` to match constructor signature
+        + however no explicit pointer to this space, so user cannot free it
+  + solution by standard `<string>`
+    + lets user get a copy of `string` in a char array, but makes them do so explicitly 
+    + `string::c_str()`
+      + copies content of stirng to null-terminated char array 
+      + the `string` class owns the char array, and will be valid only until next call of a member function that might change ths `string`
+        + hence user expected to use pointer immediately or to copy data into storage where they manage themselves
+    + `string::data()`
+      + like `c_str()` expect it returns an array that is not null terminated 
+    + `string::copy()`  
+      + takes a `char *` and an int, and copy as many chars indicated by int into space pointed to by `char *`, which the user allocates and free 
++ _summary_ 
+  + _conversions_ defined by 
+    + non-explicity constructors that take a single argument, or 
+    + a _conversion operator_ of form `operator type-name()`, where `type-name` is target type to be converted 
+  + `friend`
+    + allow `friend` function to access private members of class granting the friendship
+  + string 
+    + `s.c_str()`: yields `const char*`, valid only until next `string` operation that might modify `s`
+      + cannot `delete` pointer and should not hold a copy of it since the contents it points to have a limited lifetime 
+    + `s.data()`
+    + `s.copy(p, n)`: user responsible to ensutre `p` allocated and freed 
+
+---
+# 13 use inheritance and dynamic binding 
+
++ _inheritance_ 
+  + context 
+    + additional properties with an underlying shared properties 
+  + usage 
+    + `class Grad : public Core`
+      + `Grad` is a new class type derived from `Core` 
+      + every member of `Core` is also a member of `Grad` 
+        + except for constructor, assignment operator, and destructor 
+      + Derived class `Grad` can add new member, and constructor 
+      + also redefine member from base class `Core`
+      + `public Core`: `Grad` inherits the `public` interface to `Core`, which becomes part of the `public` interface to `Grad`, i.e. public member of `Core` is effectively public members of `Grad` 
+  + _protection_ 
+    + 
 
 
 
@@ -1077,7 +1332,7 @@ _iterators_
 + _type_
   + _output_: advance through container one element at a time,. write each element visited once and only once (i.e. `copy`)
   + _input_: advance through container one element at a time, read each element as often as needed before advancing to next element
-  + _forward_: advance through container one at a time, to revisit elements to which previously remembered iterators refer and to read or write each element as often as needed
+  + _forward_:  advance through container one at a time, to revisit elements to which previously remembered iterators refer and to read or write each element as often as needed
   + _bidirectional_: move through container one at a time, either forward or backward (`list` and `map` provide bidirectional iterators, `algorithm:reverse` requires this iterator)
   + _random access_: possible to move through container using all operations supported by pointers. i.e. `vector`, `string`, built-in arrays supports random access iterators (`algorithm::sort` requires this operator)
 
