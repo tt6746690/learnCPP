@@ -1248,8 +1248,234 @@ _summary_
       + also redefine member from base class `Core`
       + `public Core`: `Grad` inherits the `public` interface to `Core`, which becomes part of the `public` interface to `Grad`, i.e. public member of `Core` is effectively public members of `Grad` 
   + _protection_ 
-    + 
+    + `protected`: 
+      + allows derived class access to `protected` member of base class 
+      + keeps member inaccessible to users of the classes (i.e. calls `Grad* g = new Grad; g.midterm` is not allowed)
+  + _inheritance and constructor_ 
+    + _lifecycle for derived class_ `Grad g`: 
+      + allocate space for the entire object (base-class member + derived-class member)
+      + call base-class constructor to initialize base-class parts of the object 
+        + which base-class constructor decided with constructor initializer 
+        + i.e. `Grad(): thesis(0) {}`: uses the default constructor `Core:Core()` implicitly since constructor initializer is empty
+      + initialize members of derived class by _constructor initializer_ 
+      + execute body of derived-class constructor, if any
++ _polymorphisms_ 
+  ```cpp 
+  bool compare(const Core& c1, const Core& c2)
+  {
+    return c1.name() < c2.name();
+  }
+  ```
+  + we can compare `Core` and `Grad` mix and match 
+    + `compare(grad, grad2);` or `compare(core, core2)` or `compare(grad, core)`
+    + in each comparison, the `name` member of class `Core` is always the one used!
+      + for `compare(grad, grad2);`: `Grad` inherits `Core::name()` so it operates the same way 
+    + able to pass in `Grad` to function expecting `Core` because `Grad` inherits from `Core`
+      + hence every `Grad` object has `Core` part
+      + ![](2017-06-29-17-04-17.png)
+      + the compiler does the proper conversion
+  + _obtain value without knowing object's type_ 
+  ```cpp 
+  bool compare_grades(cons Core& c1, const Core& c2)
+  {
+    return c1.grade() < c2.grade();
+  }
+  ```
+  + now notice `grade()` has different impl in `Core` and `Grad`
+    + problem: no way of distinguishing two versions of `grade()`
+      + by signature of args, `Core::grade()` is always the one getting executed
+      + so a `Grad` passed into the function converts to `Core` and `Core.grade()` is executed, which is wrong!
+    + need a way to invoke the right `grade()` function, depending on actual type of object
+      + i.e. if `c1, c2` are `Grad` object, then want `Grad.grade()` if they are `Core` object, then want `Core.grade()`
+      + decision made at runtime, since type only known at runtime
+  + `virtual` functions: 
+    + allows runtime selection 
+    + maybe defined in class definition only 
+    + `virtual` function is inherited, 
+      + so need not repeat `virtual` designation on derived class member function
+    + `virtual` function, if declared, must be defined
+      + unlike non-virtual function, which could be declared but undefined as long as function is not called elsewhere
+    + solution
+      + `virtual double grade() const;`, `grade()` is a virtual function
+      + runtime determine which `grade` function to run by inspecting each object that was passed to `compare_grades()`. 
+        + if arg is `Grad` object, will run `Grad::grade()`
+        + if arg is `Core` object, will run `Core::grade()`
+  + _dynamic binding_ 
+    + _context_ 
+      + _static binding_
+        + function param as objects, 
+          + already know exact type of object at compile time, and type is fixed,
+          + so always this object type's function is run
+        + example 
+          + `bool compare_grades(Core c1, Core c2){return c1.grade() < c2.grade();}`
+          + `virtual grade()` here is _statically bound_ since
+            + params are objects, so type are known, there is no possibility that the object will have a different type during execution than it does during compilation
+            + we can still call `compare_grades` on `Grad` type objects, in this case, the `Grad` objects will be _cut down_ to the `Core` part, and a copy of that portion is passed to `compare_grades()`
+            + since params are `Core` objects, calls to `grade` is statically bound, at compile time, to `Core::grade()`
+            + its always `Core::grade()` that is invoked 
+      + _dynamic binding_
+        + function param as reference/pointer, 
+          + do not know exact type of object since 
+          + reference/pointer to base-class may refer to base class object or objects of a derived class type 
+          + hence type may differ at runtime 
+          + it is in this case that `virtual` function come into play
+        + example 
+          + `bool compare_grades(Core &c1, Core &c2){return c1.grade() < c2.grade();}`
+          + `virtual grade()` is _dynamically bound_ 
+            + function bound at runtime
+            + the version of `virtual` function to use will depend on type of object to which the reference or pointer is bound
+      + ```cpp 
+        Core c;
+        Grad g;
+        Core* p;      // Core pointer -> pointer to Core
+        Core& r = g;  // Core reference -> reference to Grad
 
+        c.grade();    // statically bound to Core::grade()
+        g.grade();    // statically bound to Grad::grade()
+        p->grade();   // dynamically bound, Core::grade()
+        r.grade();    // dynamically bound, Grad::grade() even though r is of type Core&
+        ```
+        + first 2 statically bound even though `grade()` is a `virtual` function 
+        + last 2 dynamically bound since do not know type of `p` or `r` until at runtime, 
+          + might be either `Core` or `Grad`
+          + decision as to which function to run is delayed until runtime
+      + _polymorphism_ 
+        + provision of a single interface to entities of different types
+        + use a derived type where a pointer or reference to base is expected 
+        + supported via dynamic-binding property of `virtual` functions 
+          + _polymorphic call_: call `virtual` function through a pointer/reference
+            + i.e. `p->grade()` where `virtual grade()`
+          + type of pointer/reference is fixed 
+          + but type of objects to which it refers/points can be 
+            + type of the reference/pointer 
+            + or any type derived from it 
+          + hence we can potentially call one of many functions through a single type
+    + _container of (virtually) unknown type_ 
+      + problem   
+        + `vector<Core> students;` must holds `Core` objcts, not polymorphic types 
+        + `Core record;`: `Core` object, not a type derived from `Core` 
+        + hardcoded, 
+      + solution 
+        + use pointer/reference to `Core`, this way, type of object bound can differ from type of pointer or reference 
+          + `vector<Core*> students;`
+          + `Core* record;`
+        + this way, `students`'s type can be determined at runtime 
+        + however, 
+          + have to manipulate pointers and not objects
+          + `delete students[i]` always store `Core *`, and not `Grad *`, hence we are deleting a  pointer to `Core` and never a pointer to `Grad`, even if the pointer actually points to `Grad` 
+            + fix with virtual destructor
+    + _virtual destructor_ 
+      + usage 
+        + needed anytime it is possible that an object of derived type is destroyed through a pointer to base 
+      + _context_ 
+        + call `delete p`
+          + destructor run on object `*p`
+          + space the object holds is freed 
+          + here the synthesized default constructor is called. 
+        + decision 
+          + which destructor should system run (`~Core()` or `~Grad`)
+          + destroy members of `Core` or `Grad` 
+          + how much space freed?
+      + _solution_  
+        + `virtual ~Core() {}`
+          + no need to add virtual destructor to derived class since its inherited 
+        + now `delete students[i]` 
+          + will run destructor depending on type of object to which `students[i]` actually points
+    + _simple handle class_
+      + _the problem_ 
+        + need to be able to deal with objects whose type we could not know until runtime 
+          + either `Core` or a derived class of `Core` 
+        + previous solution 
+          + use pointers, since we can allocate a pointer to `Core` and then make it points to either a `Core` or `Grade` 
+            + problem: require extra complexity for managing pointers 
+      + _the solution_ 
+        + use `class Student_info { private: Core* cp; }`
+        + let `Student_info` object represent either a `Core` or a `Grad` 
+          + act like pointer 
+          + but do not have to worry about allocating underyling objects to which `Student_info` is bound 
+          + take care of error prone part of program
+    + _static member function_  
+      + cannot operate on object of the class type 
+        + i.e. associated with class, not a particular object 
+        + hence cannot access non-`static` members 
+      + names are within scope of their class 
+        + i.e. `Student_info::compare` 
+        + does not pollute namespace, overload other function inadvertently 
+    + _copy handle objects_ 
+      + problem 
+        + does not know if `Student_info` should copy to `Core` or derived class of `Core` 
+      + solution
+        + `virtual Core* clone() const {return new Core(*this);}`
+        + allocates a new `Core` object that use `Core`'s copy constructor to give that new object appropriate values 
++ _subtleties_ 
+  + _inheritance and containers_ 
+    + `vector<Core> students;`
+      + note at some point, `vector` allocates storage for type `Core` during initialization
+    + `students.push_back(Grad g(cin))`
+      + here only the `Core` part of `Grad` is copied and stored in students 
+  + _same function name_ 
+    + functions with same name but different signatures in base and derived class are completely unrelated functions 
+      + `void Core::regrade(double d){ final = d; }`
+      + `void Grad::regrade(double d1, double d2){ final = d1; thesis = d2; }`
+      + `Core &r;`
+        + `r.regrade(100)`: calls `Core::regrade()`
+        + `r.regrade(100, 100)`: compiler error, `Core::regrade` takes a single arg
+          + note the error is there regardless of type of object `r` refers to, be it `Core` or `Grad`
+      + `Grad &r;`
+        + `r.regrade(100);`: compiler error, `Grad::regrade` takes 2 args   
+          + if `r` is `Grad`, even if there is a base-class version of `regrade` that takes a single argument, that version is effectively hidden by existence of `regrade` in derived class 
+          + so have to call it explicitly `r.Core::regrade(100)`: ok call `Core::regrade()`
+        + `r.regrade(100, 100)`: ok, call `Grad::regrade`
++ _summary_ 
+  + inheritance 
+  ```cpp 
+  class base {
+    public: 
+      //common interface 
+    protected: 
+      // impl member accessible in derived class 
+    private: 
+      // impl accessible to current class 
+  };
+  // public interface base is part of the interface for derived 
+  class derived: public base { ... };
+  ```
+  + inheritance privately 
+    + `class priv_derived: private base {...};`
+    + rare 
+  + derivation chain can be several layers deep 
+    + `class derived2: public derived {...};`
+  + _dynamic binding_ 
+    + ability to select at runtime which function to run based on the actual type of object on which the function is called 
+    + in effect, for calls to `virtual` function made through a pointer or a reference 
+  + `virtual` 
+    + inherited, i.e. no need to repeat in derived class 
+    + must be defined 
+    + not required to redefine `virtual` function in derived class, 
+      + instead inherites the nearest definition for that function 
+  + _overriding_ 
+    + a derived class member function overrides a function with the same name in base class if the two functions have 
+      + same number and types of params and both/neither are `const` 
+  + `virtual` destructor 
+    + if a pointer to base class is used to delete an object that might actually be an derived-class object
+    + then base class needs a `virtual` destructor 
+  + constructor and `virtual` function 
+    + note
+      + object under construction, its type is the type of class under construction 
+    + hence calls to `virtual` function inside a constructor are statically bound to the version for the type being constructed
+  + class friendship 
+    + a class can designate another as its `friend`
+      + grants friendship to all the member function of the other class 
+    + not inherited nor transitive 
+      + friend of friends and classes derived from friends have no special priviledges
+  + `static` member 
+    + member of class, 
+    + `this` not available, can access only `static` data members 
+    + one instance of `static` data member for the entire class, 
+      + which must be initialize, usually in source file that implements the class member functions
+      + usually outside of class definition, so have to qualify the name 
+        + i.e. `value-type class-name::static-member-name = value;`
+      
 
 
 ---
