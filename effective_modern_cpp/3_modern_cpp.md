@@ -582,3 +582,533 @@
 
 --- 
 #### Item 11: Prefer deleted functions to private undefined ones
+
+
+
++ _motivation_ 
+    + prevent client from calling functions C++ automatically generates
+        + _copy ctor_
+        + _copy assignment operator_
++ _C++98 private undefined functino_
+    + `basic_ios`
+        + copying `istream` and `ostream` is not desirable, since not clear what such operations should do
+    ```cpp 
+    template<class charT, class traits = char_traits<charT>>
+    class basic_ios: public ios_base {
+        public: 
+            ...
+        private:
+            basic_ios(const basic_ios&);        // copy ctor
+            basic_ios& operator=(const basic_ios&); // copy assign
+    }
+    ```
+    + _disable by_ 
+        + _declare functions as `private`_, and
+            + prevent clients from calling them 
+        + _dont define them_
+            + if code still has access to them, linking will fail due to missing function definition
++ _C++11: deleted function_
+    + use `= delete` to mark member function as __deleted function__
+        + `friend` function cant use it as well
+        ```cpp 
+        template<class charT, class traits = char_traits<charT>>
+        class basic_ios: public ios_base {
+            public:
+                basic_ios(const basic_ios&) = delete;
+                basic_ios& operator=(const basic_ios&) = delete;
+        }
+        ```        
+    + __any__ function can be deleted, (while only member function may be private)
+        ```cpp 
+        // vaguely numeric type implicitly converted to int
+        bool isLucky(int number);       
+        // explicitly disable such overloads 
+        bool isLucky(char) = delete;        // reject chars
+        bool isLucky(bool) = delete;        // rejects bools    
+        bool isLucky(double) = delete;      // rejects doubles/flats
+
+        if(isLucky('a'))        // error, call to deleted function
+        if(isLucky(true))       // error!
+        if(isLucky(3.5f))       // error!
+        ```
+    + _deleted function can prevenrt use of template instantiation that should be disabled_
+        ```cpp 
+        template<typename T>
+        void processPointer(T* ptr);
+
+        template<>
+        void processPointer<void>(void *) = delete;
+        template<>
+        void processPointer<char>(char *) = delete;
+        template<>
+        void processPointer<const void>(void *) = delete;
+        template<>
+        void processPointer<const char>(char *) = delete;
+
+        // and other char types... std::wchar_t, std::char16_t
+        ```
+        + _note_
+            + base template should reject 
+                + `void *`: no way to dereference them
+                + `char *`: decayed from C-style strings
+        + _cannot be solved with by declaring template specialization `private`_ 
+            + because template specialization must be written at namespace scope, not class scope,
+                + so cant declare `private` and not define template specialization 
+            ```cpp 
+            // C++98
+            class Widget {
+                public:
+                    template<typename T>
+                    void processPointer(T *ptr){
+                        ...
+                    }
+                private:
+                    template<>
+                    void processPointer<void>(void*);   // error!
+            };
+            ```
+            ```cpp 
+            // C++11
+            class Widget {
+                public:
+                    template<typename T>
+                    void processPointer(T* ptr){
+                        ...
+                    }
+            };
+
+            template<>
+            void Widget::processPointer<void>(void *) = delete;
+            ```
++ _summary_
+    + prefer _deleted fucntion_ to _privately undefined ones_
+    + any function may be deleted, including 
+        + _non-member functions_
+        + _template instantiation_ 
+
+
+--- 
+
+#### Item 12: Declaring overriding functions `override`
+
++ _motivation_ 
+    + virtual function implementations in derived class _overrides_ the implementations of their base class counterparts
+    + makes it possible to _invoker derived class function through base class interface_
+        ```cpp 
+        class Base {
+            public:
+                virtual void doWork();
+                ...
+        };
+
+        class Derived: public Base {
+            public:
+                virtual void doWork();      // overrides Base::doWork
+        };
+
+        // Creates base class pointer to derived class object
+        std::unique_ptr<Base> upb = std::make_unique<Derived>();
+        // call doWork via base class ptr, derived class function invoked
+        upb->doWork();         
+        ```
++ _Requirements for overriding to occur_
+    + base class function must be virtual 
+    + base and derived function name must be identical (except destructor)
+    + parameter types of base and derived functions must be identical 
+    + the `const`ness of the base and derived functions must be identical 
+    + the return type and exception specifications of base and derived functions must be compatible
+    + (_added in C++11_) the functions' _reference qualifiers_ must be identical
++ _reference qualifiers_
+    + limit use of member function `lvalue` only or `rvalue` only 
+    ```cpp 
+    class Widget{
+        public: 
+            void doWork() &;    // apply only when *this is lvalue
+            void doWork() &&;   // apply only when *this is rvalue
+    };
+
+    Widget makeWidget();        // factory. return rvalue
+    Widget w;                   // normal object (lvalue)
+
+    w.doWork();                 // call Widget::doWork &
+    makeWidget().doWork()       // calls Widget::doWork &&
+    ```
+    + _note_ 
+        + `func() &` impose that `*this` is `lvalue`    
+        + `func() &` impose that `*this` is `rvalue`
+    ```cpp 
+    class Widget {
+        public:
+            using DataType = std::vector<double>;
+            DataType & data() {
+                return values;
+            }
+            DataType data() && {
+                return std::move(vaules);
+            }
+        private:    
+            DataType values;
+    };
+    ```
+    ```cpp 
+    Widget w;
+    auto vals1 = w.data();      // calls Widget::data() &
+                                // copy w.values into vals1
+                                // since returning lvalue reference
+                                // vals1 copy constructed
+    Widget makeWidget();
+    auto vals2 = makeWidget().data();   // calls Widget::data() &&
+                                        // vals2 move constructed
+    ```
+    + _note_
+        + if `*this` is `rvalue` we can avoid extra copy and `move` the `data` inside of `rvalue` widget.
++ _problem_ 
+    + easy to make mistake, 
+    + may compile, but may not override as intended
+    ```cpp 
+    class Base {
+        public:
+            virtual void mf1() const;
+            virtual void mf2()(int x);
+            virtual void mf3() &;
+            void mf4() const;
+    };
+    class Derived: public Base {
+        public:
+            virtual void mf1();     
+            virtual void mf2(unsigned int x);
+            virtual void mf3() &&;
+            void mf4() const;
+    }
+    ```
+    + _note_ all 4 member function do not override
+        + `mf1` `const`ness different 
+        + `mf2` has different argument types 
+        + `mf3` has different referene qualifier
+        + `mf4` is not declared `virtual` in `Base`
++ _Declase `override` in derived member_ 
+    ```cpp 
+    class Derived: public Base {
+        virtual void mf1() override;
+        virtual void mf2(unsigned int x) override;
+        virtual void mf3() && override;
+        virtual void mf4() const override;
+    }
+    ```
+    + _note_ 
+        + gives compiler warnings...
+    + _`override` and `final` are contextual keyword_
+        + meaning they are reserved, but only in context where they occur at end of a member function declaration
++ _summary_
+    + delcaring overriding functions in derived class with `override`
+    + member function reference qualifiers makes it possible to reat `lvalue` and `rvalue` objects `*this` differently
+
+
+--- 
+
+#### Item 13: Prefer `const_iterator`s to `iterator`s
+
++ _motivation_ 
+    + `const_iterator`
+        + equivalent to pointer-to-`const`
+        + point to values that may not be modified
+    ```cpp
+    std::vector<int> values;
+    std::vector<int>::iterator it = 
+        std::find(values.begin(), values.end(), 1983);
+    values.insert(it, 1998);
+    ```
+    + _note_
+        + `it` not modifying `values` so should be `const` 
+    ```cpp 
+    // C++98
+    typedef std::vector<int>::iterator IterT;
+    typedef std::vector<int>::const_iterator ConstIterT;
+
+    std::vector<int> values;
+
+    ConstIterT ci = 
+        std::find(static_cast<ConstIterT>(values.begin()),
+            static_cast<ConstIterT>(valules.end()),
+            1983);
+    values.insert(static_cast<IterT>(ci), 1998);        // wont compile
+    ```
+    + _note_
+        + locations for insertions could specified by `iterator` only `const_iterator` not acceptable
+        + problem arises because `const_iterator` cannot be converted to `iterator`...
++ _solution_ 
+    + `const_iterator` is easy to get/use
+        + `cbegin()`, `cend()` produce `const_iterator`s
+    + STL member function that use iterator to identify positions (i.e. `insert`, `erase`) uses `const_iterator`
+        ```cpp 
+        auto it = std::find(values.cbegin(), values.cend(), 1983);
+        values.insert(it, 1998);
+        ```
+    + _extending support to_ 
+        + container-like data structure as non-member function 
+        + 3rd party library with free functions only 
+        ```cpp 
+        // C++11 Error! C++14 OK
+        template<typename C, typename V>
+        void findAndInsert(C& Container, 
+                            const V& targetVal, 
+                            const V& insertVal)
+        {
+            using std::cbegin;
+            using std::cend;
+
+            auto it = std::find(cbegin(container),
+                                cend(container),
+                                targetVal);
+            container.insert(it, insertVal);
+        }
+        ```
+        + _note_
+            + C++14 added free function `cbegin()`, ...
+        ```cpp 
+        // impl of cbegin() in C++11
+        template<typename C>
+        auto cbegin(const C& container) -> decltype(std::begin(container))
+        {
+            return std::begin(container);
+        }
+        ```
+        + _note_
+            + works because `std::begin()` on `const` container yields a `const_iterator`
+            ```cpp 
+            iterator begin() noexcept;
+            const_iterator begin() const noexcept;
+            ```
++ _summary_
+    + prefer `const_iterator` to `iterator`s
+    + in maximally generic code, prefer non-member version of `begin()`, `end()`, `rbegin()` over their member function counterparts
+
+--- 
+
+#### Item 14: Declare functions `noexcept` if they won't emit exceptinos
+
+
+
++ _motivation_ 
+    + _exception specification_ 
+        + _C++98_
+            + have to summarize exception types a function might emit
+            + breaks code if change it
+            + doesnt worth the trouble
+        + _C++11_
+            + truly meaningful info is if it had any
+            + either a function might emit an exception or it wouldnt
++ `noexcept`
+    + functions that guarantee they won't emit exceptions 
++ _insentives to `noexcept`_
+    + allows compiler to generate better object code
+    ```cpp 
+    int f(int x) throw();       // no exception in C++98
+    int f(int x) noexcept;      // no exception in C++11
+    ```
+    + _note_ at runtime 
+        + `throw()`
+            + call stack unwound to `f`'s caller 
+            + program terminates '
+        + `noexcept`
+            + stack possibly unwound before program execution terminatess
+            + _optimizable_, since compiler 
+                + do not need to keep runtime stack in an unwindable state if an exception would propagate out of the function
+                + do not need to ensure objects in `noexcept` are destroyed in reverse order of construction
+    ```cpp 
+    ret func(param) noexcept;       // most optimizable
+    ret func(param) throw();        // less optimizable 
+    ret func(param);                // less optimizable
+    ```
++ _A case study_
+    ```cpp
+    // C++98
+    std::vector<Widget> vw;
+    Widget w;
+    vw.push_back(w);      // add w to vw
+    ```
+    + `push_back()`
+        + if size equal to capacity, allocates space and copy elements from existing memory to new memory
+            + _strong exception safety guarantee_ since
+            + if exception thrown during copy, state of original vector remains unchanged
+        + if want to support `move` semantics during reallocation 
+            + _risks violating exception safety guarantee_ since
+            +  if exception thrown during move, state of of original vector has been modified, and maybe impossible to rollback
+    + _idea_
+        + move if you can, but copy if you must 
+        + replace calls to copy operations with move operations in C++11 only if move operation is known to not emit exceptions
+        + i.e. 
+            + `vector::reserve`, `deque::insert`, `swap`
+        + done by checking if `move` is declared `noexcept`
++ _conditionally `noexcept`_
+    _impl of `swap` for array and `std::pair`_
+    ```cpp 
+    template<class T, size_t N>
+    void swap(T (&a)[N],
+            T (&b)[N]) noexcept(noexcept(swap(*a, *b)));
+    
+    template<class T1, class T2>
+    struct pair {
+        void swap(pair& p) 
+            noexcept(noexcept(swap(first, p.first)) && 
+                    noexcept(swap(second, p.second)));
+    }
+    ```
+    + _note_
+        + expression inside `noexcept` determines if the function is `noexcept` or not
+        + _after-thought_
+            + the fact that swapping higher-level data structures can generally be `noexcept` only if swapping their lowr-level constituents is `noexcept` should motivate implementer to offer `noexcept swap()` function whenever possible
+    + important to maintain correctness of `noexcept` first, otherwise
+        + exception escape from a `noexcept` code
+    + hence most function are _exception-neutral_
+        + but `move` and `swap` functions for higher level classes may worth while to implement `noexcept` if possible
++ _some function are `noexcept` by language specification_
+    + all memory deallocation functions and destructors are implicitly `noexcept`
++ _narrow contract function may declare `noexcept`_ 
+    + _wide contract_ 
+        + functions with no preconditions 
+        + maybe called regardless state of program
+        + impose no contraints on arguments supplied
+    + _narrow contract_
+        + if a precondition is violated, results undefined
+    + _narrow contract function may declare `noexcept`_
+        + since `f` has no obligation to check precondition 
+        + `f` assumes all precondition satisifed
++ _inconsistensies in `noexcept`_
+    ```cpp 
+    void setup();
+    void cleanup();
+
+    void doWork() noexcept {
+        setup()
+        ...
+        cleanup();
+    }
+    ```
+    + _note_
+        + `doWork` is `noexcept` even if it calls non-`noexcept` functions
++ _summary_
+    + `noexcept` is part of function's interface, hence caller may depend on it 
+    + `noexcept` functions are more optimizable 
+    + `noexcept` are particularly valuable for move operations, `swap`, memory deallocation functions, and destructors 
+    + most functions are exception-neutral rather than `noexcept`
+
+
+--- 
+
+#### Item 15: Use `constexpr` whenever possible
+
++ `constexpr`
+    + indicates a value that is not only constant, it's known during compilation 
+    + _pitfalls_
+        + results of `constexpr` functions cannot be assumed to be `const` 
+        + values are not taken for granted available during compilation
++ `constexpr` objects 
+    + objects in which they are `const` and have values known at compile time 
+        + i.e. value determined during _translation_ (compiling + linking)
+        + all `constexpr` objects are `const`, but not all `const` objects are `constexpr`
+    + `constexpr` objects maybe placed in read-only memory 
+        + useful in embedded systems ... 
+    + integral values that are constant and known during compilation can be used in contexts where C++ requires _integral constant expression_  
+        + array sizes 
+        + integral template arguments 
+        + enumerator values
+        + alignment specifiers 
+    ```cpp 
+    int sz;     // non-constexpr variable 
+
+    constexpr auto arraySize1 = sz;     // error! sz's value ont known 
+    std::array<int, sz> data1;          // error!, ditto
+    ```
+    ```cpp 
+    constexpr auto arraySize2 = 10;         // compile-time constant
+    std::array<int, arraySize2> data2;      // OK
+    ```
+    + _note_
+        + `const` objects does not give such guarantee to be known at compile time
++ `constexpr` function 
+    + function that produce 
+        + _compile-time constants_ when they are called with compile-time constants
+        + _runtime values_ when they are called with values not known until runtime
+    ```cpp 
+    constexpr 
+    int pow(int base, int exp) noexcept;
+    
+    constexpr auto numConds = 5;
+    std::array<int, pow(3, numConds)> results;  
+    ```
+    ```cpp 
+    // C++11
+    constexpr int pow(int base, int exp) noexcept 
+    {
+        return (exp == 0 ? 1 : base * pow(base, exp - 1));
+    }
+    ```
+    + C++11, may container no more than a single executable statement (i.e. one `return`)
+        + can use `?:` in place of `if-else`
+        + use recursion instead of loops
+    
+    + C++14
+        + looser 
+        + limited to taking and returning _literal types_ 
+            + types which _can_ have values during compilation 
+            + all build-in types except `void`
+            + user-defined types with `constexpr` ctor and data member
+        ```cpp 
+        class Point {
+            public: 
+                constexpr Point(double xVal = 0, double yVal=0) 
+                    noexcept :x(xVal), y(yVal){}
+
+                constexpr double xValue() const noexcept {return x;}
+                constexpr double yVaule() const noexcept {return y;}
+
+                constexpr Point midpoint(
+                    const Point& p1, const Point& p2) noexcept
+                {
+                    return {
+                        (p1.xValue() + p2.xValue()) / 2,
+                        (p1.yValue() + p2.yValue()) / 2
+                    };
+                }
+
+                // C++14 but not C++11
+                constexpr void setX(double newX) noexcept {x=newX;}
+                constexpr void setY(double newY) noexcept {y=newY;}
+            private:
+                double x, y;
+        };
+
+        // C++14
+        constexpr Pointer reflectino(const Point& p) noexcept{
+            Point result;           // non-const Point
+            result.setX(-p.xValue());
+            result.setY(-p.yValue());
+            return result;          // return a copy 
+        }
+
+        // all compile time constants
+        constexpr Point p1(9.4, 27.7);
+        constexpr Point p2(28.8, 5.3);
+        constexpr auto mid = midpoint(p1, p2);
+        constexpr auto reflectedMid = reflect(mid);
+        ```
+        + _note_
+            + implies we can use `mid.xValue() * 10` (a constant expression) as 
+                + _argument to template_
+                + _expression specifying values of enum_
+            + _Setters in C++11 cannot be declared `constexpr`_
+                + `constexpr` function in C++11 is implicitly `const`
+                + `constexpr` has `void` return type, which is not a _literal type_
+            + _C++14 lifts these restrictions_
++ _summary_
+    + `constexpr` objects are `const` and initialized with value known at compilation 
+    + `constexpr` functions can produce compile-time results when called with arguments whose values are known during compilaiotn 
+    + `constexpr` objects/functions may be used in contexts of non-`constexpr` objects/functions 
+    + `constexpr` is part of object/function's interface, so change with caution 
+
+--- 
+
+
+#### Item 16: Make `const` membe functions thread safe
+    
