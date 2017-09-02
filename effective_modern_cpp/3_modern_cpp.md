@@ -1110,5 +1110,317 @@
 --- 
 
 
-#### Item 16: Make `const` membe functions thread safe
+#### Item 16: Make `const` member functions thread safe
     
+
++ _motivation_ 
+    ```cpp 
+    class Polynomial {
+        public: 
+            using RootsType = std::vector<double>;
+
+        // cache roots, and compute just once
+        RootsType roots() const{    
+            if(!rootsAreValid){
+                rootsAreValid = true;
+            }
+            return rootVals;
+        }
+
+        private:
+            mutable bool rootsAreValid{ false };
+            mutable RootsType rootVals{};
+    }
+    ```
+    + _note_
+        + `mutable`
+            + applies to non-static class members of non-reference non-const type and specifies that the member does not affect the externally visible state of the class (as often used for mutexes, memo caches, lazy evaluation, and access instrumentation). 
+            + `mutable` members of `const` class instances are modifiable. 
+    ```cpp 
+    Polynomial p;
+    // thread 1                 // thread 2
+    auto rootsOfP = p.roots();  auto rootsOfP = p.roots()
+    ```
+    + _note_
+        + _scenario_ 
+            + 2 threads simultaneously call `roots` on a `Polynomial` object 
+            + fine since `roots` is `const`-member function, representing a read operation
+            + but since its actually not read operation, it invovles mutating data member `rootsAreValid` and `rootsVals`
+            + so reading/writing cross threads without synchronization, data race...
+        + _problem_ 
+            + `roots` declared `const` but its not thread safe
+            + note `const` is valid since `Polynomial` not changed
+    ```cpp 
+    class Polynomial {
+        public: 
+            using RootsType = std::vector<double>;
+
+        // cache roots, and compute just once
+        RootsType roots() const{  
+
+            std::lock_guard<std::mutex> g(m);
+
+            if(!rootsAreValid){
+                rootsAreValid = true;
+            }
+            return rootVals;
+        }
+
+        private:
+            mutable std::mutex m;
+            mutable bool rootsAreValid{ false };
+            mutable RootsType rootVals{};
+    }
+    ```
+    + _note_
+        + `mutex` declared `mutable` since locking and unlocking it are `non-const` member functions, and otherwise within `roots` (`const` function) `m` would otherwise be considered `const`
+        + `mutex` is move-only type (not copied)
+            + hence `Polynomial` losses ability to be copied as well...
+    ```cpp 
+    class Pointer {
+        public:
+            double distanceFromOrigin() const noexcept 
+            {
+                ++callCounts;
+                return std::sqrt((x*x) + (y*y));
+            }
+        private:
+            mutable std::atomic<unsigned> callCount{0};
+            double x, y;
+    }
+    ```
+    + _note_
+        +  use of `std::atomic` counter, which other threads are guaranteed to see its operations occur indivisibly 
+        + `std::atomic` are move-only types 
+            + hence `Point` is move only as well, cant copy
+        + `std::atomic` are less expensive than mutex acquisition and release
+            + so prefer `atomic`s over `mutex`s
+    ```cpp 
+    class Widget {
+        public:
+            int magicValue() const
+            {
+                if(cacheValid) return cachedValue;
+                else {
+                    auto val1 = expensiveCompute1();
+                    auto val2 = expensiveCompute2();
+                    cachedValue = val1 + val2;
+                    cachedValid = true;
+                    return cachedValue;
+                }
+            }
+        private:
+            mutable std::atomic<bool> cachedValid{false};
+            mutable std::atomic<int> cachedValue;
+    }
+    ```
+    + _problems_ 
+        + A thread call `magicValue`, see `cacheValid` is `false`, perform 2 expensive computations 
+        + another thread (maybe multiple) sees `cacheValid`, carries out expensive operations that the first just finished...
+        + goes against intention of caching
+    ```cpp 
+    int magicValue() const
+    {
+        if(cacheValid) return cachedValue;
+        else {
+            auto val1 = expensiveCompute1();
+            auto val2 = expensiveCompute2();
+            cachedValid = true;
+            cachedValue = val1 + val2;
+            return cachedValue;
+        }
+    }
+    ```
+    + _note_
+        + reversing assignments to `cachedValue` and `cacheValid` is even more problematic 
+            + a thread executes just past setting `cacheValid` to `true`
+            + a second thread checks `cacheValid` seeing it true, the thread returns `cachedValue`, even though the first thread has not yet made an assignment, the return value is hence incorrect 
+    ```cpp 
+    class Widget {
+        public:
+            int magicValue() const
+            {
+                std::lock_guard<std::mutex> guard(m);
+                if(cacheValid) return cachedValue;
+                else {
+                    auto val1 = expensiveCompute1();
+                    auto val2 = expensiveCompute2();
+                    cachedValue = val1 + val2;
+                    cachedValid = true;
+                    return cachedValue;
+                }
+            }
+        private:
+            mutable std::mutex m;
+            mutable std::atomic<bool> cachedValid{false};
+            mutable std::atomic<int> cachedValue;
+    }
+    ```
+    + _takeaway_
+        + for a single variable or memory location requiring synchronization, use of `std::atomic` is adequate 
+        + once >= 2 variables or memory location require manipulation as a unit, should use `mutex` instead
++ _summary_ 
+    + make `const` member function thread safe unless certain they'll never be used in concurrent context 
+    + use of `std::atomic` variables may offer better performance than `std::mutex`, but they are suited for manipulation of only a single variable or memory location
+
+
+--- 
+
+#### Item 17: Understand special member function generation
+
+
++ _motivation_ 
+    + _special member function_ 
+        + functions that C++ is willing to generate on its own
+        + _C++98_ 
+            + default constructor 
+                + if no constructor declared at all
+            + destructor 
+            + copy constructor 
+            + copy assignment operator
+        + _C++11_ (additional)
+            + move constructor 
+            + move assignment operator
+        + only generated only if needed
+        + implicitly `public` and `inline`
+        + non-`virtual` unless function in question is a destructor in a derived class inheriting from a base class with a virtual destructor
+    ```cpp 
+    class Widget {
+        public:
+            Widget(Widget&& rhs);
+            Widget& operator=(Widget&& rhs);
+    }
+    ```
+    + _move constructor and assignment operator_
+        + _generation_ 
+            + _generated on demand if_
+                + no copy operations are declared in class 
+                + no move operations are declared in class 
+                + no destructor declared in class
+            + _not generated_
+                + if defined either move operation
+                + if explicitly declares a copy operations
+                    + implies something wrong with default memberwise copy, since memberwise move uses memberwise copy, memberwise move probably wrong as well
+                + if a class has a user-declared destructor 
+                    + stems from _Rule of Three_
+                    + destructor -> user-defined copy constructor/assignment operator -> no move constructor/assignment operator generated
+            + _copy vs move_ 
+                + _copy_
+                    + 2 operations independent 
+                    + declaring one doesn't prevent compiler from generating the other
+                + _move_
+                    + 2 operations not independent
+                    + declaring either, prevents compiler from generating the other
+                    + idea is if define a move constructor/assignment, then not using the defualt memberwise move assginment. Then if something's wrong with memberwise move construction, then probably memberwise move assignment is also wrong.
+            + _if generated_
+                + then compiler disable the copy operations by deleting them
+        + _behavior_ 
+            + peform _memberwise moves_ on non-static data members of class 
+                + i.e. move constructor move-constructs each non-static data member of class from corresponding member of its parameter `rhs`, 
+                + move assignment operator move-assigns each non-staic data-member from its parameter
+            + also move-constructs its base class parts
+            + _move-construct/move-assign_ 
+                + does not guarantee that a move will take place 
+                + in reality, 
+                    + move operation on data members and base classes that support move operations 
+                    + copy operation for those that don't
+            + _under the hood_
+                + memberwise _move_ entails application of `std::move` to object to be moved, and the result is used using function overload resolution to determine whether a move or a copy should be performed
+    + _Rule of Three_
+        + if declare any of a copy constructor, copy assignment operator, or destructor, you should declare all three.
+        + _observation_ 
+            + meaning of copy operation stemmed from class performing some kind of resource management, implies 
+                + whenever resource management was being done in one copy operationprobably needed to be done in the other copy operation
+                + the class destructor would also be participating in management of resources (releasing it)
+            + presence of user-declared destructor
+             implies 
+                +  simple memberwise copy is unlikely to be appropriate for the copying operations in the class
+        + remains valid 
+    ```cpp 
+    class Widget {
+        public:
+            ~Widget();
+
+            Widget(const Widget&) = default;
+            WIdget& operator=(const Widget&) = default;
+    };
+    ```
+    + _note_
+        + `default` indicates compiler-generated functions is correct
+    ```cpp 
+    class Base {
+        public:
+            virtual ~Base() = default;  // make dtor virtual 
+
+            Base(Base&&) = default;     // support moving 
+            Base& operator=(Base&&) = default;
+
+            Base(const Base&) = default;    // support copying
+            Base& operator(const Base&) = default;
+    };
+    ```
+    + _`default` application_ 
+        + _applies to polymorphic base class_
+            + must have virtual destructors
+            + only way is to declare function and prefix it with `virtual`
+            + However, user-defined destructor suppress generation of move operations
+            + so use `=default` if want movability
+        + _applies to copy operations_ 
+            + if user-declared move operation 
+            + which suppress copy operations generation 
+            + so use `=default` if want copyability 
+        + _use `=default` to express intention_
+    ```cpp 
+    class StringTable {
+        public:
+            StringTable(){
+                makeLogEntry("Create StringTable Object");
+            }
+            ~StringTable(){
+                makeLogEntry("Destroy StringTable Object");
+            }
+
+
+        private:
+            std::map<int, std::string> values;
+    };
+    ```
+    + _note_
+        + addition of logging in ctor/dtor
+            + prevents move operations from generated
+            + copy opreations unaffected
+            + will compile fine, but cause copies to be made since no longer move-enabled
+        + _solution_ 
+            + declare copy/move operations `=default`
+    + _Rules_ 
+        + _default constructor_ 
+            + same rules in C++98, generated only if class contains no user-declared constructors 
+        + _destructor_ 
+            + essentially same rules as C++98, difference is destructors are `noexcept` by default, `virtual` if base class destructor is virtual 
+        + _copy constructor_ 
+            + same runtime behavior as C++98, membewise copy construction of non-static members. 
+                + _Generated_ only if class lacks user-declared copy constructor
+                + _Deleted_ if class declares a move operation 
+            + generation in a class with user-declared copy constructor/destructor is deprecated
+        + _copy assignment operator_ 
+            + same runtime behavior as C++98, memberwise copy assignment of non-static data member, 
+                + _generated_ only if class lacks copy assignment operator 
+                + _deleted_ if class declares a move operation 
+        + _move constructor / move assignment operator_ 
+            + Each performs memberwise moving of non-static data members. 
+                + _generated_ only if class contains no user-declared copy operations, move operations, or destructor
+    + _member function templates never suppress generation of special member functions_
+        ```cpp 
+        class Widget {
+            template<typename T>
+            Widgget(const T& rhs);
+
+            template<typename T>
+            WIdget& operator=(const Widget& rhs);
+        }
+        ```
+        + _note_ 
+            + compiler still generate copy/move operations for `Widget`
++ _summary_
+
+            
