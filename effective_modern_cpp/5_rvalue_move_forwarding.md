@@ -71,7 +71,7 @@
             explicit Annotation(std::string text);  // copied
     };
     ```
-    ````cpp
+    ```cpp
     class Annotation {
         public:
             // read only
@@ -91,7 +91,7 @@
             // move in constructor
             explicit Annotation(const std::string text)
                 : value(std::move(text)){}      
-    };
+    }; 
     ```
     + _note_
         + `text` is copied! (instead of moved) to `value`
