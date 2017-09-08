@@ -358,7 +358,281 @@
 + _summary_ 
     + use C++14 init capture to move objects to closure
     + C++11, emulate init capture by hand-written function object class, or `std::bind`
-   
+
+--- 
+
+#### Item 33: Use `decltype` on `auto&&` parameters to `std::forward` them 
+
++ _generic lambdas_
+    + lambda that use `auto` in parameter specifications 
+    ```cpp 
+    // generic lambda
+    auto f = [](auto x){
+        return func(normalize(x));
+    };
+
+    // closure class
+    class someCompilerGeneratedClassName {
+        public:
+            template<typename T>
+            auto operator()(T x) const {
+                return func(normalize(x));
+            }
+    };
+    ```
+    + _note_
+        + `operator()` in lambda's closure class is a template
+        + does forwrading to `normalize` 
+        + Wrong if 
+            + `normalize` treat `lvalue` `rvalue` differently,
+            + parameter is always `lvalue`
+    ```cp 
+    auto f = [](auto&& x)
+    { 
+        return func(normalize(std::forward<???>(x)));
+    };
+    ```
+    + _note_
+        + perfect foward `x`
+        + _problem_ 
+            + normally, template function taking `T` so just write `forward<T>`
+            + but in generic lambda, no type parameter `T` available to client (although there is a `T` in the templatized `operator()` inside closure class)
+    + _`decltype`_ 
+        + `decltype(x)` will produce a lvalue reference type if `x` is lvalue 
+        + `decltype(x)` will produce a rvalue reference if `x` is rvalue
+    ```cpp 
+    template<typename T>
+    T&& forward(remove_reference_t<T>& param)
+    {
+        return static_cast<T&&>(param);
+    }
+    ```
+    + _`std::forward` behavior_ 
+        + type argument is lvalue reference if to indicate lvalue 
+            + corresponds to `decltype`, both generates `T&`
+            + lvalue behave as expected 
+        + non-reference to indicate rvalue
+            + different from `decltype` (`T&&`) vs the desired deduced type (`T`)
+    ```cpp 
+    // instantiation when T is Widget (forward + rvalue)
+    Widget&& forward(Widget& param)
+    {
+        return static_cast<Widget&&>(param);
+    }
+
+    // instantiation when T is Widget&& (decltype + rvalue)
+    Widget && forward(Widget& param)
+    {
+        return static_cast<Widget&&>(param);
+    }
+    ```
+    + _note_ 
+        + _instantiation with rvalue reference type (`T&&`) yields same result as instantiating it with non-reference type (`T`)_
+        + _consequence_ (for `rvalue`) 
+            + `decltype(x)` yields _rvalue reference type_ when rvalue is passed as argument to lambda parameter `x`
+            + but the result of forwarding yields the same type (i.e. rvalue `T&&`)
+    ```cpp 
+    auto f = 
+        [](auto && param)
+        {
+            return func(normalize(
+                std::forward<decltype(param)>(param)
+            ))
+        };
+    
+    auto f = 
+        [](auto&&...params)
+        {
+            return func(normalize(
+                std::forward<decltype(params)>(params)...
+            ))
+        }
+    ```
+    + _solution_ 
+        + a perfect-forwrading lambda
++ _summary_ 
+    + use `decltype` on `auto&&` parameter to `std::forward` them
+
+--- 
+
+#### Item 34: Prefer lambdas to `std::bind`
+
++ `bind`
+    + C++11 successor to C++98 `std::bind1st` `std:bind2nd`
+    + returns a function object, i.e. _bind object_
++ _lambdas are more readable than `std::bind`_
+    ```cpp
+    using Time = std::chrono::steady_clock::time_point;
+    using Duration = std::chrono::steady_clock::duration;
+
+    enum class Sound { Beep, Siren, Whistle};
+
+    void setAlarm(Time t, Sound s, Duration d);
+
+    // function object for allowing sounds specified for 30s alarm go off in 1hr after its set
+    ```
+    ```cpp 
+    // C++11
+    auto setSoundL = 
+        [](Sound s){
+            using namespace std::chrono;
+
+            setAlarm(steady_clock::now() + hours(1), 
+            s,
+            seconds(30));
+        };
+    // C++14
+    auto setSoundL = 
+        [](Sound s){
+            using namespace std::chrono;
+            using namespace std::literals;
+
+            setAlarm(steady_clock::now() + 1h,  
+                s,
+                30s);
+        };
+    ```
+    ```cpp 
+    // bind
+    using namespace std::chrono;
+    using namespace std::literals;
+    using namespace std::placeholders;
+
+    // incorrect!
+    auto setSoundB = 
+        std::bind(setAlarm,
+                steady_clock::now() + 1h,
+                _1, 
+                30s);
+    ```
+    + _caveats with `bind`_ 
+        + have to mentally map `_1` to position in the `bind` parameter list, (2nd arg to ` bind`)
+        + might have to consult `setAlarm` to determine type of `_1`
+        + _incorrect_ 
+            + `steady_clock::now() + 1h` 
+                + passed as args to `bind` 
+                + not as arg to `setAlarm`
+            + _consequence_ 
+                + expression will be evaluated when `bind` is called, and the time resulting from the expression will be stored inside the bind objet 
+                + alarm will set off 1hr _after call to `bind`_ not 1 hr _after call to `setAlarm`_ 
+    ```cpp 
+    auto setSoundB = 
+        std::bind(
+            setAlarm, 
+            std::bind(std::plus<>(),    steady_clock::now(), 1h),   // C++14
+            _1, 
+            30s
+        );
+    ```
+    + _defered evaluation of expression_ 
+        + tell `bind` to defer evaluation until `setAlarm` is called 
+        + not readable ! 
+    ```cpp 
+    enum class Volume {Normal, Loud, LoudPlusPlus};
+
+    // overload
+    void setAlarm(Time t, Sound s, Duration d, Volume v);
+    ```
+    + _note_ 
+        + lambda version works fine, by overload resolution
+        + `bind` version fails to compile, since compiler cannot determine which of 2 `setAlarm` functions should pass to `bind`
+    ```cpp 
+    using SetAlarm3ParamType = 
+        void(*)(Time t, Sound s, Duration d);
+    
+    auto setSoundB = 
+        std::bind(
+            static_cast<SetAlarm3ParamType>(setAlarm),
+            std::bind(std::plus<>(), steady_clock::now(), 1h),
+            _1,
+            30s
+        );
+    ```
+    + _solution: specify overloaded function type_
+    ```cpp 
+    auto betweenL = 
+        [lowVal, highVal]
+        (const auto& val)       // C++14
+        { return lowVal <= val && 
+            val << highVal;};
+    ```
+    ```cpp 
+    using namespace std::placeholders;
+
+    auto betweenB = 
+        std::bind(std::logical_and<>(), 
+            std::bind(std::less_equal<>(), lowVal, _1),
+            std::bind(std::less_equal<>(), _1, highVal));
+    ```
+    + _lambda rocks!_ 
+    ```cpp 
+    enum class CompLevel { Low, Normal, High };
+    Widget compress(const Widget& w,    
+        CompLevel lev);
+
+    Widget w;
+
+    // bind
+    using namespace std::placeholders;
+    auto compressRateB = std::bind(compress, w, _1);
+
+    // lambda 
+    auto compressRateL = 
+        [w](CompLevel lev){
+            return compress(w, lev);
+        };
+    ```
+    ```cpp 
+    compressRateL(CompLevel::High);     // by value 
+    compressRateB(CompLevel::High);     // by reference
+    ```
+    + _note_
+        + _`bind` has no indication if pass by-value or by-reference_
+            + captures are passed by value
+                + i.e., `w` is stored by-value
+                + use `bind(compress, std::ref(w), _1)` for by-reference semantics
+            + parameters passed to bind object are by reference
+                + since use perfect forwarding
+                + i.e. `CompLevel::High` by-reference
+        + _lambda makes this explicit via capture_
++ _verdict_ 
+    + No need to use `bind` in C++14
+    + _C++11_ 2 restricted case
+        + _move capture_
+            + via a lambda and a `std::bind`
+            + _succeeded by_ 
+                + C++14 init capture 
+        + _polymorphic function objects_
+            + `bind`'s `operator()` uses perfect forwarding, accepts arguments of any type 
+            ```cpp 
+            class PolyWidget {
+                public:
+                    template<typename T>
+                    void operator()(const T& param);
+            };
+
+            PolyWidget pw;
+            auto boundPW = std::bind(pw, _1);
+
+            boundPW(1930);
+            boundPW(nullptr);
+            boundPW("rosebud");
+            ```
+            + _note_
+                + calls to `boundPW` accepts arbitrary arguments 
+            + _succeeded by_
+                + C++14 `auto` parameter (generic lambda)
+            ```cpp 
+            auto boundPW = [pw](const auto& param){
+                pw(param);
+            };
+            ```
++ _summary_ 
+    + lambdas are more readable, more expressive, maybe more efficient 
+    + in C++11 only, `bind` maybe useful for implementing 
+        + _move capture_
+        + binding objects with templatized function call operators
+
 
 
         
