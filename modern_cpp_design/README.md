@@ -1429,3 +1429,146 @@
         + `static_cast` required to disambiguate different `value_`
         + or use `Field` 
             + uses implicit derived-to-base conversion
+    ```cpp 
+    // return value corresponding to Unit<T1>&
+    template<class H, typename R>
+    inline R& FieldHelper(H& obj, Type2Type<R>, Int2Type<0>)
+    {
+        typename H::LeftBase& subobj = obj;
+        return subobj;
+    }
+
+    // return type at specified index in typelist
+    template<class H, typename R, int i>
+    inline R& FieldHelper(H& obj, Type2Type<R> tt, Int2Type<i>)
+    {
+        typename H::RightBase& subobj = obj;
+        return FieldHelper(subobj, tt, Int2Type<i-1>());
+    }
+
+
+    // usage
+    WidgetInfo obj;
+    int x = Field<0>(obj).value_;       // first int
+    int y = Field<1>(obj).value_;       // second int
+    ```
+    + _note_ 
+        + 2 overload based on `Int2Type<>`
+    + _summary_ 
+        + `GenScatterHierarchy` useful for generating elaborate class from typelist by compounding a simple template
++ _Generating Tuples_ 
+    + _goal_ 
+        + small structure with unnamed field
+    ```cpp 
+    template<class T>
+    struct Holder
+    {
+        T value_;
+    };
+
+    typedef GenScatterHierarchy<
+        TYPELIST_3(int, int, int),
+        Holder>
+        Point3D;
+    ```
+    + _note_ 
+        + want to generate similar structure, but with `Field` access functions returning references to `value_` member drectly
+        + i.e. `Field<n>` returns `int&` instead of `Holder<int>&`
+    ```cpp 
+    typedef Tuple<TYPELIST_3(int, int, int)> 
+        Point3D;
+    
+    Point3D pt;
+    Field<0>(pt) = 0;
+    Field<1>(pt) = 100;
+    Field<2>(pt) = 300;
+    ```
+    + _note_ 
+        + note tuple is useful for creating small anonymous structures
++ _Generating Linear Hierarchies_ 
+    ```cpp 
+    template<class T>
+    class EventHandler
+    {
+    public:
+        virtual void OnEvent(const T&, int eventId) = 0;
+        virtual void ~EventHandler() {}
+    };
+
+    typedef GenScatterHierarchy<
+        TYPELIST_3(Window, Button, ScrollBar),
+        EventHandler>
+        WidgetEventHandler;
+    ```
+    + _problem_ 
+        + `GenScatterHierarchy` uses multiple inheritance
+            + `WidgetEventHandler` contains 3 pointers to virtual tables, one for each instantiation
+
+
+
+--- 
+
+# Chapter 4 Smaller-Object Allocation
+
+> Early Optimization is the root of all evils       -- Donald Knuth 
+
+> Belated pessimization is the leaf of no good      -- Len Lattanzi
+
++ _motivation_ 
+    + small object of few bytes  maybe in use often
+    + some require polymorphic behavior, so cannot store on stack but live on free store 
+    + `new` and `delete`
+        + means of using free store
+        + but are general purpose and perform badly for allocating small objects
++ _Default free store allocator_ 
+    + _impl_ 
+        + wrapper around `malloc/realloc/free`
+            + C heap allocator not focused on optimizing small chunk allocation
+            + usually make ordered, conservative use of memory. 
+            + so a good idea to allocate say thousands of bytes 
+            + space inefficient for small objects
+                + bookkeeping memory in memory pool costs few bytes (4~32) for each block allocated with `new`
++ _Workings of a memory allocator_ 
+    ```cpp 
+    struct MemControlBlock 
+    {
+        std::size_t size_;
+        bool available_;
+    };
+
+    struct MemControlBlock
+    {
+        std::size_t size_ : 31;
+        bool available_ : 1;
+    };
+    ```
+    + _memory allocator_ 
+        + manages a pool of raw bytes 
+        + able to allocate chunk of arbitrary size from that pool
+        + memory right after the struct `MemControlBlock`
+        + ![](2017-09-27-19-16-46.png)
+            + _root control block_ 
+        + _allocation_ 
+            + linear search of memory blocks finds a suitable block for the requested size 
+        + _deallocation_ 
+            + search for figuring out memory block that precedes the block and adjustment of its size
+        + _discussion_ 
+            + not time efficient
+            + overhead in size is small
+                + can be squeezed to just `size_t`
+    ```cpp 
+    struct MemControlBlock
+    {
+        bool avilable_;
+        MemControlBlock* prev_;
+        MemControlBlock* next_;
+    };
+    ```
+    + _allocator with constant-time deallocation_
+        + `size` is equivalent to `this->next_ - this`
+        + larger space overhead 
+        + constant time deallocation, but allocation takes linear time
++ _A small-object allocator_ 
+    + ![](2017-09-27-19-23-03.png)
+        + structure 
+
